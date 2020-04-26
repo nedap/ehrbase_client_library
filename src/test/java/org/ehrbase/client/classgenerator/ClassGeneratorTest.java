@@ -73,6 +73,8 @@ public class ClassGeneratorTest {
                 .map(t -> t.fieldSpecs).flatMap(List::stream).collect(Collectors.toList());
 
 
+        writeFiles(generate);
+
         assertThat(fieldSpecs)
                 .extracting(f -> f.name, f -> f.type.toString())
                 .containsExactlyInAnyOrder(
@@ -122,7 +124,7 @@ public class ClassGeneratorTest {
                 );
 
 
-        writeFiles(generate);
+
         }
     }
 

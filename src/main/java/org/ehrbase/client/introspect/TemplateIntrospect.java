@@ -67,14 +67,7 @@ import java.lang.reflect.Field;
 import java.lang.reflect.Modifier;
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Optional;
-import java.util.Set;
+import java.util.*;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
@@ -162,7 +155,9 @@ public class TemplateIntrospect {
         Class rmClass = RM_INFO_LOOKUP.getClass(ccomplexobject.getRmTypeName());
 
         if (Pathable.class.isAssignableFrom(rmClass)) {
-            localNodeMap.putAll(handleNonTemplateFields(rmClass, path));
+            //fields that must be added even if not in the template
+            //will be replaced later on
+            Map<String, Node> nonTemplateFields = handleNonTemplateFields(rmClass, path);
 
 
             List<CAttribute> cattributes = ccomplexobject.getAttributes();
@@ -184,21 +179,20 @@ public class TemplateIntrospect {
                     }
 
                 }
-                multiValuedMap
-                        .asMap()
-                        .forEach((key, value) -> {
-                            if (value.size() == 1) {
-                                localNodeMap.put(key, value.iterator().next());
-                            } else {
-                                localNodeMap.put(key,
-                                        new ChoiceNode(
-                                                value.iterator().next().getName(),
-                                                new ArrayList<>(value),
-                                                value.stream().filter(n -> EntityNode.class.isAssignableFrom(n.getClass())).map(n -> (EntityNode) n).anyMatch(EntityNode::isMulti))
-                                );
-                            }
-                        });
-
+                for(Map.Entry<String, Collection<Node>> entry:multiValuedMap.asMap().entrySet()) {
+                    String key = entry.getKey();
+                    Collection<Node> value = entry.getValue();
+                    if (value.size() == 1) {
+                        localNodeMap.put(key, value.iterator().next());
+                    } else {
+                        localNodeMap.put(key,
+                                new ChoiceNode(
+                                        value.iterator().next().getName(),
+                                        new ArrayList<>(value),
+                                        value.stream().filter(n -> EntityNode.class.isAssignableFrom(n.getClass())).map(n -> (EntityNode) n).anyMatch(EntityNode::isMulti))
+                        );
+                    }
+                }
                 if (History.class.isAssignableFrom(rmClass)) {
                     Map<String, List<Map.Entry<String, Node>>> collect = localNodeMap.entrySet().stream().filter(e -> e.getKey().contains("/data[at0002]/event")).collect(Collectors.groupingBy(e -> new FlatPath(e.getKey()).getChild().getAtCode()));
                     if (collect.keySet().size() > 1) {
@@ -237,6 +231,17 @@ public class TemplateIntrospect {
                     localNodeMap.put("/context/setting", new EndNode(DvCodedText.class, "setting", TerminologyProvider.findOpenEhrValueSet(OPENEHR, "setting")));
                 }
             }
+
+            //add only those default fields that aren't in the template to the tree of nodes
+            Map<String, Node> nonTemplateNodesToAdd = new LinkedHashMap<>();
+            for(String nonTemplatePath:nonTemplateFields.keySet()) {
+                if(localNodeMap.keySet().stream().filter(p -> p.startsWith(nonTemplatePath)).findAny().isEmpty()) {
+                    //this hasn't been added by the archetype. Add
+                    //TODO: add CAttribute name to the EndNode? Better than this!
+                    nonTemplateNodesToAdd.put(nonTemplatePath, nonTemplateFields.get(nonTemplatePath));
+                }
+            }
+            localNodeMap.putAll(nonTemplateNodesToAdd);
         } else {
             //TODO: WHAT does this code do and why?!
             ValueSet termDefinitionSet = ccomplexobject.getAttributes().stream()
