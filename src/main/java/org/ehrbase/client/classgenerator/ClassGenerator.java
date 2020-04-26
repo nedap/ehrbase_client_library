@@ -17,39 +17,73 @@
 
 package org.ehrbase.client.classgenerator;
 
+import com.google.common.base.CharMatcher;
+import com.nedap.archie.adlparser.ADLParser;
+import com.nedap.archie.aom.OperationalTemplate;
 import com.nedap.archie.rm.datatypes.CodePhrase;
 import com.nedap.archie.rminfo.ArchieRMInfoLookup;
 import com.nedap.archie.rminfo.RMTypeInfo;
-import com.squareup.javapoet.*;
-import org.apache.commons.cli.*;
+import com.squareup.javapoet.AnnotationSpec;
+import com.squareup.javapoet.ClassName;
+import com.squareup.javapoet.FieldSpec;
+import com.squareup.javapoet.JavaFile;
+import com.squareup.javapoet.MethodSpec;
+import com.squareup.javapoet.ParameterizedTypeName;
+import com.squareup.javapoet.TypeName;
+import com.squareup.javapoet.TypeSpec;
+import org.apache.commons.cli.CommandLine;
+import org.apache.commons.cli.CommandLineParser;
+import org.apache.commons.cli.DefaultParser;
+import org.apache.commons.cli.HelpFormatter;
+import org.apache.commons.cli.Options;
+import org.apache.commons.cli.ParseException;
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.lang3.RandomStringUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.reflect.FieldUtils;
 import org.apache.commons.text.CaseUtils;
 import org.apache.xmlbeans.XmlException;
-import org.ehrbase.client.annotations.*;
+import org.ehrbase.client.annotations.Archetype;
+import org.ehrbase.client.annotations.Choice;
+import org.ehrbase.client.annotations.Entity;
+import org.ehrbase.client.annotations.Id;
+import org.ehrbase.client.annotations.OptionFor;
+import org.ehrbase.client.annotations.Path;
+import org.ehrbase.client.annotations.Template;
 import org.ehrbase.client.aql.fieldgenerator.FieldGenerator;
 import org.ehrbase.client.classgenerator.config.RmClassGeneratorConfig;
 import org.ehrbase.client.exception.ClientException;
 import org.ehrbase.client.flattener.PathExtractor;
 import org.ehrbase.client.introspect.TemplateIntrospect;
-import org.ehrbase.client.introspect.node.*;
+import org.ehrbase.client.introspect.node.ArchetypeNode;
+import org.ehrbase.client.introspect.node.ChoiceNode;
+import org.ehrbase.client.introspect.node.EndNode;
+import org.ehrbase.client.introspect.node.EntityNode;
+import org.ehrbase.client.introspect.node.Node;
+import org.ehrbase.client.introspect.node.SlotNode;
+import org.ehrbase.client.introspect.node.TemplateNode;
 import org.ehrbase.client.openehrclient.VersionUid;
 import org.ehrbase.client.terminology.ValueSet;
 import org.ehrbase.ehr.encode.wrappers.SnakeCase;
-import org.openehr.schemas.v1.OPERATIONALTEMPLATE;
-import org.openehr.schemas.v1.TemplateDocument;
+import org.openehr.referencemodels.BuiltinReferenceModels;
 import org.reflections.Reflections;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import javax.lang.model.SourceVersion;
 import javax.lang.model.element.Modifier;
+import java.io.FileInputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.lang.reflect.Field;
 import java.nio.file.Paths;
-import java.util.*;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 public class ClassGenerator {
@@ -88,13 +122,13 @@ public class ClassGenerator {
         }).collect(Collectors.toMap(RmClassGeneratorConfig::getRMClass, c -> c));
     }
 
-    public ClassGeneratorResult generate(String packageName, OPERATIONALTEMPLATE operationalTemplate) {
+    public ClassGeneratorResult generate(String packageName, OperationalTemplate operationalTemplate, String language) {
         currentTypeSpec = new HashMap<>();
         currentResult = new ClassGeneratorResult();
         currentPackageName = packageName;
         currentMainClass = "";
-        ArchetypeNode root = new TemplateIntrospect(operationalTemplate).getRoot();
-        String templateId = operationalTemplate.getTemplateId().getValue();
+        ArchetypeNode root = new TemplateIntrospect(operationalTemplate, language).getRoot();
+        String templateId = operationalTemplate.getArchetypeId().getFullId();
 
         TemplateNode templateNode = new TemplateNode(templateId, root.getArchetypeId(), root.getChildren(), templateId, operationalTemplate.getDefinition().getRmTypeName());
         TypeSpec build = build(templateNode).build();
@@ -393,6 +427,10 @@ public class ClassGenerator {
             return RandomStringUtils.randomAlphabetic(10);
         }
         String normalisedString = StringUtils.strip(StringUtils.stripAccents(name).replaceAll("[^A-Za-z0-9]", "_"), "_");
+        if(normalisedString.charAt(0) >= '0' && normalisedString.charAt(0) <= '9') {
+            //digit at first place is not allowed
+            normalisedString = "d" + normalisedString;
+        }
         return CaseUtils.toCamelCase(normalisedString, capitalizeFirstLetter, '_');
     }
 
@@ -400,6 +438,7 @@ public class ClassGenerator {
 
 
         OPTIONS.addOption("opt", true, "path to opt file");
+        OPTIONS.addOption("language", true, "two-letter language code");
         OPTIONS.addOption("package", true, "package name");
         OPTIONS.addOption("out", true, "path to output directory");
         OPTIONS.addOption("h", false, "show help");
@@ -417,18 +456,22 @@ public class ClassGenerator {
             showHelp();
         }
 
-        if (!cmd.hasOption("opt") || !cmd.hasOption("package") || !cmd.hasOption("out")) {
+        if (!cmd.hasOption("opt") || !cmd.hasOption("package") || !cmd.hasOption("out") || !cmd.hasOption("language")) {
             showHelp();
         }
-        OPERATIONALTEMPLATE template = TemplateDocument.Factory.parse(Paths.get(cmd.getOptionValue("opt")).toFile()).getTemplate();
-        ClassGenerator cut = new ClassGenerator();
-        ClassGeneratorResult generate = cut.generate(cmd.getOptionValue("package"), template);
+        try (InputStream stream = new FileInputStream(Paths.get(cmd.getOptionValue("opt")).toFile())) {
+            //TODO: catch ClassCastException
+            OperationalTemplate template = (OperationalTemplate) new ADLParser(BuiltinReferenceModels.getMetaModels()).parse(stream);
+            ClassGenerator cut = new ClassGenerator();
+            ClassGeneratorResult generate = cut.generate(cmd.getOptionValue("package"), template, cmd.getOptionValue("language"));
 
-        java.nio.file.Path fsRoot = Paths.get(cmd.getOptionValue("out"));
+            java.nio.file.Path fsRoot = Paths.get(cmd.getOptionValue("out"));
 
-        List<JavaFile> generateFiles = generate.writeFiles(fsRoot);
-        FieldGenerator fieldGenerator = new FieldGenerator();
-        fieldGenerator.generate(generateFiles).writeFiles(fsRoot);
+            List<JavaFile> generateFiles = generate.writeFiles(fsRoot);
+            FieldGenerator fieldGenerator = new FieldGenerator();
+            fieldGenerator.generate(generateFiles).writeFiles(fsRoot);
+        }
+
     }
 
     private static void showHelp() {

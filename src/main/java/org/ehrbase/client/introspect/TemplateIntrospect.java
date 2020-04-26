@@ -17,6 +17,19 @@
 
 package org.ehrbase.client.introspect;
 
+import com.nedap.archie.aom.Archetype;
+import com.nedap.archie.aom.ArchetypeSlot;
+import com.nedap.archie.aom.CArchetypeRoot;
+import com.nedap.archie.aom.CAttribute;
+import com.nedap.archie.aom.CComplexObject;
+import com.nedap.archie.aom.CObject;
+import com.nedap.archie.aom.OperationalTemplate;
+import com.nedap.archie.aom.primitives.CTerminologyCode;
+import com.nedap.archie.aom.terminology.ArchetypeTerm;
+import com.nedap.archie.aom.terminology.ArchetypeTerminology;
+import com.nedap.archie.aom.terminology.TerminologyCodeWithArchetypeTerm;
+import com.nedap.archie.aom.utils.AOMUtils;
+import com.nedap.archie.base.MultiplicityInterval;
 import com.nedap.archie.rm.archetyped.Pathable;
 import com.nedap.archie.rm.composition.Composition;
 import com.nedap.archie.rm.datastructures.Event;
@@ -26,30 +39,42 @@ import com.nedap.archie.rm.datavalues.quantity.datetime.DvDateTime;
 import com.nedap.archie.rm.generic.Participation;
 import com.nedap.archie.rm.generic.PartyIdentified;
 import com.nedap.archie.rminfo.ArchieRMInfoLookup;
+import com.nedap.archie.rminfo.MetaModels;
 import org.apache.commons.collections4.ListValuedMap;
 import org.apache.commons.collections4.multimap.ArrayListValuedHashMap;
-import org.apache.commons.lang3.ArrayUtils;
-import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.reflect.FieldUtils;
 import org.ehrbase.client.exception.ClientException;
 import org.ehrbase.client.flatpath.FlatPath;
 import org.ehrbase.client.introspect.config.RmIntrospectConfig;
-import org.ehrbase.client.introspect.node.*;
+import org.ehrbase.client.introspect.node.ArchetypeNode;
+import org.ehrbase.client.introspect.node.ChoiceNode;
+import org.ehrbase.client.introspect.node.EndNode;
+import org.ehrbase.client.introspect.node.EntityNode;
+import org.ehrbase.client.introspect.node.Node;
+import org.ehrbase.client.introspect.node.SlotNode;
 import org.ehrbase.client.terminology.TermDefinition;
 import org.ehrbase.client.terminology.TerminologyProvider;
 import org.ehrbase.client.terminology.ValueSet;
 import org.ehrbase.ehr.encode.wrappers.SnakeCase;
-import org.openehr.schemas.v1.*;
+import org.openehr.referencemodels.BuiltinReferenceModels;
 import org.reflections.ReflectionUtils;
 import org.reflections.Reflections;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import javax.annotation.Nullable;
 import java.lang.reflect.Field;
 import java.lang.reflect.Modifier;
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
@@ -67,16 +92,28 @@ public class TemplateIntrospect {
     private final Logger log = LoggerFactory.getLogger(getClass());
 
     private final Map<Class, RmIntrospectConfig> configMap;
-    private final OPERATIONALTEMPLATE operationaltemplate;
+    private final OperationalTemplate operationaltemplate;
     private final ArchetypeNode root;
+    private String language = "en";//TODO: make configurable
+
+    private final MetaModels metaModels;
 
 
-    public TemplateIntrospect(OPERATIONALTEMPLATE operationaltemplate) {
+
+    public TemplateIntrospect(OperationalTemplate operationaltemplate, String language) {
 
         this.operationaltemplate = operationaltemplate;
+        metaModels = BuiltinReferenceModels.getMetaModels();
+        if(metaModels == null) {
+            //SOMEONE did something ugly
+            throw new RuntimeException("NO METAMODELS!");
+        }
+        metaModels.selectModel(operationaltemplate);
         configMap = buildConfigMap();
+        // constructor is doing all the work?
         root = buildNodeMap();
 
+        this.language = language;
     }
 
     public static Map<Class, RmIntrospectConfig> buildConfigMap() {
@@ -96,32 +133,29 @@ public class TemplateIntrospect {
     }
 
     private ArchetypeNode buildNodeMap() {
-        CARCHETYPEROOT definition = operationaltemplate.getDefinition();
-        return handleCARCHETYPEROOT(definition, "", false);
+        CComplexObject definition = operationaltemplate.getDefinition();
+        ArchetypeTerminology terminology = operationaltemplate.getTerminology();
+        return new ArchetypeNode(
+                getText(definition, terminology),
+                definition.getNodeId(),
+                handleCComplexObject(definition, "", terminology, ""), false, definition.getRmTypeName());
 
     }
 
-    private ArchetypeNode handleCARCHETYPEROOT(CARCHETYPEROOT definition, String name, boolean multi) {
-        Map<String, TermDefinition> termDef = new HashMap<>();
+    private ArchetypeNode handleCARCHETYPEROOT(CArchetypeRoot definition, String name, boolean multi) {
+
         // Keep term definition to map
-        for (ARCHETYPETERM term : definition.getTermDefinitionsArray()) {
-            String code = term.getCode();
-            String value = null;
-            String description = null;
-            for (StringDictionaryItem item : term.getItemsArray()) {
-                if ("text".equals(item.getId())) {
-                    value = item.getStringValue();
-                }
-                if ("description".equals(item.getId()))
-                    description = item.getStringValue();
-            }
-            termDef.put(code, new TermDefinition(code, value, description));
+        Archetype archetype = definition.getArchetype();
+        ArchetypeTerminology terminology = archetype.getTerminology(definition);
 
-        }
-        return new ArchetypeNode(Optional.ofNullable(termDef.get("at0000")).map(TermDefinition::getValue).orElse(name), definition.getArchetypeId().getValue(), handleCCOMPLEXOBJECT(definition, "", termDef, ""), multi, definition.getRmTypeName());
+        ArchetypeTerm term = archetype.getTerm(definition, language);
+        return new ArchetypeNode(
+                term != null ? term.getText() : "unknown term for " + definition.getNodeId(),
+                definition.getNodeId(),
+                    handleCComplexObject(definition, "", terminology, ""), multi, definition.getRmTypeName());
     }
 
-    private Map<String, Node> handleCCOMPLEXOBJECT(CCOMPLEXOBJECT ccomplexobject, String path, Map<String, TermDefinition> termDef, String term) {
+    private Map<String, Node> handleCComplexObject(CComplexObject ccomplexobject, String path, ArchetypeTerminology termDef, String term) {
 
         HashMap<String, Node> localNodeMap = new HashMap<>();
         log.trace("RmTyp: {}", ccomplexobject.getRmTypeName());
@@ -131,11 +165,11 @@ public class TemplateIntrospect {
             localNodeMap.putAll(handleNonTemplateFields(rmClass, path));
 
 
-            CATTRIBUTE[] cattributes = ccomplexobject.getAttributesArray();
-            if (ArrayUtils.isNotEmpty(cattributes)) {
+            List<CAttribute> cattributes = ccomplexobject.getAttributes();
+            if (!cattributes.isEmpty()) {
                 ListValuedMap<String, Node> multiValuedMap = new ArrayListValuedHashMap<>();
 
-                for (CATTRIBUTE cattribute : cattributes) {
+                for (CAttribute cattribute : cattributes) {
                     String pathLoop = path + PATH_DIVIDER + cattribute.getRmAttributeName();
                     log.trace("Path: {}", pathLoop);
                     if (
@@ -145,8 +179,8 @@ public class TemplateIntrospect {
                         continue;
                     }
 
-                    for (COBJECT cobject : cattribute.getChildrenArray()) {
-                        multiValuedMap.putAll(handleCOBJECT(cobject, pathLoop, termDef, term));
+                    for (CObject cobject : cattribute.getChildren()) {
+                        multiValuedMap.putAll(handleCObject(cobject, pathLoop, termDef, term));
                     }
 
                 }
@@ -170,7 +204,11 @@ public class TemplateIntrospect {
                     if (collect.keySet().size() > 1) {
                         for (Map.Entry<String, List<Map.Entry<String, Node>>> entry : collect.entrySet()) {
                             if (entry.getValue().size() > 1) {
-                                EntityNode entityNode = new EntityNode(term + TERM_DIVIDER + termDef.get(entry.getKey()).getValue(), false, "EVENT", entry.getValue().stream().collect(Collectors.toMap(k -> k.getKey().replace("/data[at0002]/events" + "[" + entry.getKey() + "]", ""), (Function<Map.Entry<String, Node>, Node>) Map.Entry::getValue)));
+                                EntityNode entityNode = new EntityNode(term + TERM_DIVIDER + termDef.getTermDefinition(language, entry.getKey()).getText(),
+                                        false,
+                                        "EVENT",
+                                        entry.getValue().stream().collect(Collectors.toMap(k -> k.getKey().replace("/data[at0002]/events" + "[" + entry.getKey() + "]", ""),
+                                        (Function<Map.Entry<String, Node>, Node>) Map.Entry::getValue)));
                                 localNodeMap.put("/data[at0002]/events" + "[" + entry.getKey() + "]", entityNode);
                                 entry.getValue().forEach(e -> localNodeMap.remove(e.getKey()));
                             }
@@ -200,9 +238,10 @@ public class TemplateIntrospect {
                 }
             }
         } else {
-            ValueSet termDefinitionSet = Arrays.stream(ccomplexobject.getAttributesArray())
-                    .flatMap(c -> Arrays.stream(c.getChildrenArray()))
-                    .map(c -> buildTermSet(c, termDef))
+            //TODO: WHAT does this code do and why?!
+            ValueSet termDefinitionSet = ccomplexobject.getAttributes().stream()
+                    .flatMap(c -> (c.getChildren().stream()))
+                    .map(d -> buildTermSet(d, termDef))
                     .findAny()
                     .orElse(EMPTY_VALUE_SET);
             localNodeMap.put(path, new EndNode(findJavaClass(ccomplexobject.getRmTypeName()), term, termDefinitionSet));
@@ -210,44 +249,48 @@ public class TemplateIntrospect {
         return localNodeMap;
     }
 
-    private Map<String, Node> handleCOBJECT(COBJECT cobject, String
-            path, Map<String, TermDefinition> termDef, String term) {
+    private Map<String, Node> handleCObject(CObject cobject, String
+            path, ArchetypeTerminology termDef, String term) {
 
-        boolean multi = cobject.getOccurrences().getUpper() > 1 || cobject.getOccurrences().getUpperUnbounded();
+        MultiplicityInterval occurrences = cobject.effectiveOccurrences(metaModels::referenceModelPropMultiplicity);
+        boolean multi = occurrences.isUpperUnbounded() || (occurrences.getUpper() > 1  && occurrences.isUpperIncluded()) || (occurrences.getUpper() > 2) ;
 
-        if (cobject instanceof CARCHETYPEROOT && !((CARCHETYPEROOT) cobject).getArchetypeId().getValue().isEmpty()) {
-            path = path + "[" + ((CARCHETYPEROOT) cobject).getArchetypeId().getValue() + "]";
+        if (cobject instanceof CArchetypeRoot && !((CArchetypeRoot) cobject).getArchetypeRef().isEmpty()) {
+            path = path + "[" + ((CArchetypeRoot) cobject).getArchetypeRef() + "]";
             log.trace("Path: {}", path);
 
-            if (!cobject.getNodeId().isEmpty() && termDef.containsKey(cobject.getNodeId())) {
-                term = term + TERM_DIVIDER + termDef.get(cobject.getNodeId()).getValue();
+            String text = getText(cobject, termDef);
+            if (!cobject.getNodeId().isEmpty()&& text != null && !text.isEmpty()) {
+                term = term + TERM_DIVIDER + text;
             }
 
-            return Collections.singletonMap(path, handleCARCHETYPEROOT((CARCHETYPEROOT) cobject, term, multi));
+            return Collections.singletonMap(path, handleCARCHETYPEROOT((CArchetypeRoot) cobject, term, multi));
 
-        } else if (cobject instanceof CCOMPLEXOBJECT && multi) {
+        } else if (cobject instanceof CComplexObject && multi) {
             path = path + "[" + cobject.getNodeId() + "]";
             log.trace("Path: {}", path);
-            return Collections.singletonMap(path, handleEntity((CCOMPLEXOBJECT) cobject, term, termDef, multi));
+            return Collections.singletonMap(path, handleEntity((CComplexObject) cobject, term, termDef, multi));
 
-        } else if (cobject instanceof CCOMPLEXOBJECT) {
+        } else if (cobject instanceof CComplexObject) {
 
             if (cobject.getNodeId() != null && !cobject.getNodeId().isEmpty()) {
                 path = path + "[" + cobject.getNodeId() + "]";
                 log.trace("Path: {}", path);
-                if (termDef.containsKey(cobject.getNodeId())) {
-                    term = term + TERM_DIVIDER + termDef.get(cobject.getNodeId()).getValue();
+                String text = getText(cobject, termDef);
+                if (text != null && !text.isEmpty()) {
+                    term = term + TERM_DIVIDER + text;
                 }
             }
 
-            return handleCCOMPLEXOBJECT((CCOMPLEXOBJECT) cobject, path, termDef, term);
+            return handleCComplexObject((CComplexObject) cobject, path, termDef, term);
 
-        } else if (cobject instanceof ARCHETYPESLOT) {
+        } else if (cobject instanceof ArchetypeSlot) {
             if (!cobject.getNodeId().isEmpty()) {
                 path = path + "[" + cobject.getNodeId() + "]";
                 log.trace("Path: {}", path);
-                if (termDef.containsKey(cobject.getNodeId())) {
-                    term = term + TERM_DIVIDER + termDef.get(cobject.getNodeId()).getValue();
+                String text = getText(cobject, termDef);
+                if (text != null && !text.isEmpty()) {
+                    term = term + TERM_DIVIDER + text;
                 }
             }
             return Collections.singletonMap(path, new SlotNode(findJavaClass(cobject.getRmTypeName()), term, new ValueSet(LOCAL, Collections.emptySet()), multi));
@@ -258,16 +301,18 @@ public class TemplateIntrospect {
         }
     }
 
-    private ValueSet buildTermSet(COBJECT cobject, Map<String, TermDefinition> termDef) {
+    private ValueSet buildTermSet(CObject cobject, ArchetypeTerminology terminology) {
         final ValueSet valueSet;
-        if (cobject instanceof CCODEPHRASE) {
-
-            CCODEPHRASE ccodephrase = (CCODEPHRASE) cobject;
-            String terminologyId = Optional.of(ccodephrase).map(CCODEPHRASE::getTerminologyId).map(OBJECTID::getValue).orElse("");
-            if (terminologyId.equals("local")) {
-                valueSet = new ValueSet(terminologyId, Arrays.stream(ccodephrase.getCodeListArray()).filter(termDef::containsKey).map(termDef::get).collect(Collectors.toSet()));
-            } else if (StringUtils.isNotBlank(terminologyId)) {
-                valueSet = TerminologyProvider.findOpenEhrValueSet(terminologyId, ccodephrase.getCodeListArray());
+        if (cobject instanceof CTerminologyCode) {
+//TODO: rewrite
+            CTerminologyCode ccodephrase = (CTerminologyCode) cobject;
+            List<TerminologyCodeWithArchetypeTerm> terms = ccodephrase.getTerms();
+            if(!ccodephrase.getConstraint().isEmpty() && AOMUtils.isValueSetCode(ccodephrase.getConstraint().get(0))) {
+                Set<TermDefinition> converterdTerms = terms.stream().map(t -> new TermDefinition(t.getCode(), t.getTerm().getText(), t.getTerm().getDescription())).collect(Collectors.toSet());
+                valueSet = new ValueSet("local", converterdTerms);
+            } else if (!terms.isEmpty()) {
+                Set<TermDefinition> converterdTerms = terms.stream().map(t -> new TermDefinition(t.getCode(), t.getTerm().getText(), t.getTerm().getDescription())).collect(Collectors.toSet());
+                valueSet = new ValueSet("local", converterdTerms);
             } else {
                 valueSet = EMPTY_VALUE_SET;
             }
@@ -295,19 +340,25 @@ public class TemplateIntrospect {
         }
     }
 
-    private Node handleEntity(CCOMPLEXOBJECT cobject, String name, Map<String, TermDefinition> termDef,
+    private Node handleEntity(CComplexObject cobject, String name, ArchetypeTerminology termDef,
                               boolean multi) {
         Class rmClass = RM_INFO_LOOKUP.getClass(cobject.getRmTypeName());
         if (Event.class.isAssignableFrom(rmClass)) {
 
             cobject.setRmTypeName("POINT_EVENT");
-            EntityNode pointNode = new EntityNode(name + TERM_DIVIDER + Optional.ofNullable(termDef.get(cobject.getNodeId())).map(TermDefinition::getValue).orElse(""), false, cobject.getRmTypeName(), handleCCOMPLEXOBJECT(cobject, "", termDef, ""));
+            EntityNode pointNode = new EntityNode(name + TERM_DIVIDER + getText(cobject, termDef), false, cobject.getRmTypeName(), handleCComplexObject(cobject, "", termDef, ""));
             cobject.setRmTypeName("INTERVAL_EVENT");
-            EntityNode intervalNode = new EntityNode(name + TERM_DIVIDER + Optional.ofNullable(termDef.get(cobject.getNodeId())).map(TermDefinition::getValue).orElse(""), false, cobject.getRmTypeName(), handleCCOMPLEXOBJECT(cobject, "", termDef, ""));
-            return new ChoiceNode(name + TERM_DIVIDER + Optional.ofNullable(termDef.get(cobject.getNodeId())).map(TermDefinition::getValue).orElse(""), Arrays.asList(pointNode, intervalNode), multi);
+            EntityNode intervalNode = new EntityNode(name + TERM_DIVIDER + getText(cobject, termDef), false, cobject.getRmTypeName(), handleCComplexObject(cobject, "", termDef, ""));
+            return new ChoiceNode(name + TERM_DIVIDER + getText(cobject, termDef), Arrays.asList(pointNode, intervalNode), multi);
         } else {
-            return new EntityNode(name + TERM_DIVIDER + Optional.ofNullable(termDef.get(cobject.getNodeId())).map(TermDefinition::getValue).orElse(""), multi, cobject.getRmTypeName(), handleCCOMPLEXOBJECT(cobject, "", termDef, ""));
+            return new EntityNode(name + TERM_DIVIDER +
+                    getText(cobject, termDef), multi, cobject.getRmTypeName(),
+                    handleCComplexObject(cobject, "", termDef, ""));
         }
+    }
+
+    private String getText(CObject cobject, ArchetypeTerminology termDef) {
+        return Optional.ofNullable(termDef.getTermDefinition(language, cobject.getNodeId())).map(ArchetypeTerm::getText).orElse("");
     }
 
     private Map<String, Node> handleNonTemplateFields(Class clazz, String path) {
@@ -319,7 +370,7 @@ public class TemplateIntrospect {
                     .forEach(f -> {
                         String snakeName = new SnakeCase(f.getName()).camelToSnake();
                         String localPath = path + PATH_DIVIDER + snakeName;
-                        localNodeMap.put(localPath, new EndNode(unwarap(f), snakeName, introspectConfig.findExternalValueSet(f.getName()), List.class.isAssignableFrom(f.getType())));
+                        localNodeMap.put(localPath, new EndNode(unwrap(f), snakeName, introspectConfig.findExternalValueSet(f.getName()), List.class.isAssignableFrom(f.getType())));
                     });
             return localNodeMap;
         } else {
@@ -328,7 +379,7 @@ public class TemplateIntrospect {
         }
     }
 
-    public Class unwarap(Field field) {
+    public Class unwrap(Field field) {
         if (List.class.isAssignableFrom(field.getType())) {
             Type actualTypeArgument = ((ParameterizedType) field.getGenericType()).getActualTypeArguments()[0];
 

@@ -17,11 +17,13 @@
 
 package org.ehrbase.client.templateprovider;
 
-import org.openehr.schemas.v1.OPERATIONALTEMPLATE;
+
+
+import com.nedap.archie.aom.OperationalTemplate;
 
 import java.util.Optional;
 
 public interface TemplateProvider {
 
-    Optional<OPERATIONALTEMPLATE> find(String templateId);
+    Optional<OperationalTemplate> find(String templateId);
 }

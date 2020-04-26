@@ -18,6 +18,7 @@
 package org.ehrbase.client.flattener;
 
 import com.nedap.archie.aom.CComplexObject;
+import com.nedap.archie.aom.OperationalTemplate;
 import com.nedap.archie.creation.RMObjectCreator;
 import com.nedap.archie.rm.RMObject;
 import com.nedap.archie.rm.archetyped.Locatable;
@@ -41,7 +42,6 @@ import org.ehrbase.client.exception.ClientException;
 import org.ehrbase.client.normalizer.Normalizer;
 import org.ehrbase.client.templateprovider.TemplateProvider;
 import org.ehrbase.serialisation.CanonicalJson;
-import org.openehr.schemas.v1.OPERATIONALTEMPLATE;
 import org.reflections.ReflectionUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -64,6 +64,8 @@ public class Unflattener {
     private TemplateProvider templateProvider;
     public static final OptSkeletonBuilder OPT_SKELETON_BUILDER = new OptSkeletonBuilder();
 
+    private String language = "en";
+
     public Unflattener(TemplateProvider templateProvider) {
 
         this.templateProvider = templateProvider;
@@ -72,8 +74,8 @@ public class Unflattener {
     public RMObject unflatten(Object dto) {
         Template template = dto.getClass().getAnnotation(Template.class);
 
-        OPERATIONALTEMPLATE operationalTemplate = templateProvider.find(template.value()).orElseThrow(() -> new ClientException(String.format("Unknown Template %s", template.value())));
-        Locatable generate = (Locatable) OPT_SKELETON_BUILDER.generate(operationalTemplate);
+        OperationalTemplate operationalTemplate = templateProvider.find(template.value()).orElseThrow(() -> new ClientException(String.format("Unknown Template %s", template.value())));
+        Locatable generate = (Locatable) OPT_SKELETON_BUILDER.generate(operationalTemplate, operationalTemplate.getOriginalLanguage().getCodeString());
 
         mapDtoToEntity(dto, generate);
         return NORMALIZER.normalize(generate);

@@ -17,7 +17,7 @@
 
 package org.ehrbase.client.templateprovider;
 
-import org.openehr.schemas.v1.OPERATIONALTEMPLATE;
+import com.nedap.archie.aom.OperationalTemplate;
 
 import javax.cache.Cache;
 import java.util.Optional;
@@ -28,22 +28,22 @@ import java.util.Optional;
 public class CachedTemplateProvider implements TemplateProvider {
 
     private final TemplateProvider rootTemplateProvider;
-    private final Cache<String, OPERATIONALTEMPLATE> cache;
+    private final Cache<String, OperationalTemplate> cache;
 
     /**
      * @param rootTemplateProvider The warped {@link TemplateProvider}
      * @param cache                The {@link Cache} which is used for caching.
      */
-    public CachedTemplateProvider(TemplateProvider rootTemplateProvider, Cache<String, OPERATIONALTEMPLATE> cache) {
+    public CachedTemplateProvider(TemplateProvider rootTemplateProvider, Cache<String, OperationalTemplate> cache) {
 
         this.rootTemplateProvider = rootTemplateProvider;
         this.cache = cache;
     }
 
     @Override
-    public Optional<OPERATIONALTEMPLATE> find(String templateId) {
+    public Optional<OperationalTemplate> find(String templateId) {
 
-        Optional<OPERATIONALTEMPLATE> operationaltemplate = Optional.ofNullable(cache.get(templateId));
+        Optional<OperationalTemplate> operationaltemplate = Optional.ofNullable(cache.get(templateId));
 
         if (!operationaltemplate.isPresent()) {
             operationaltemplate = rootTemplateProvider.find(templateId);

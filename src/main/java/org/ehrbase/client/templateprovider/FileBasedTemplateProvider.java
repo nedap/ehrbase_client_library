@@ -18,9 +18,11 @@
 package org.ehrbase.client.templateprovider;
 
 
+import com.nedap.archie.adlparser.ADLParser;
+import com.nedap.archie.aom.OperationalTemplate;
 import org.apache.xmlbeans.XmlException;
 import org.ehrbase.client.exception.ClientException;
-import org.openehr.schemas.v1.OPERATIONALTEMPLATE;
+import org.openehr.referencemodels.BuiltinReferenceModels;
 
 import java.io.FileInputStream;
 import java.io.IOException;
@@ -68,20 +70,20 @@ public class FileBasedTemplateProvider implements TemplateProvider {
     }
 
     private String extractTemplateId(Path path) {
-        return readTemplate(path).getTemplateId().getValue();
+        return readTemplate(path).getArchetypeId().getFullId();
     }
 
-    private OPERATIONALTEMPLATE readTemplate(Path path) {
+    private OperationalTemplate readTemplate(Path path) {
         try (InputStream in = new FileInputStream(path.toFile())) {
-            org.openehr.schemas.v1.TemplateDocument document = org.openehr.schemas.v1.TemplateDocument.Factory.parse(in);
-            return document.getTemplate();
-        } catch (IOException | XmlException e) {
+            //TODO: handle parse errors!
+            return (OperationalTemplate) new ADLParser(BuiltinReferenceModels.getMetaModels()).parse(in);
+        } catch (IOException e) {
             throw new ClientException(e.getMessage(), e);
         }
     }
 
     @Override
-    public Optional<OPERATIONALTEMPLATE> find(String templateId) {
+    public Optional<OperationalTemplate> find(String templateId) {
 
         if (!pathMap.containsKey(templateId)) {
             snyc(templateDirectory);
