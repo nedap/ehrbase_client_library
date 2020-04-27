@@ -17,6 +17,7 @@
 
 package org.ehrbase.client.introspect;
 
+import com.nedap.archie.ArchieLanguageConfiguration;
 import com.nedap.archie.aom.Archetype;
 import com.nedap.archie.aom.ArchetypeSlot;
 import com.nedap.archie.aom.CArchetypeRoot;
@@ -97,7 +98,7 @@ public class TemplateIntrospect {
 
         this.operationaltemplate = operationaltemplate;
         metaModels = BuiltinReferenceModels.getMetaModels();
-        if(metaModels == null) {
+        if (metaModels == null) {
             //SOMEONE did something ugly
             throw new RuntimeException("NO METAMODELS!");
         }
@@ -107,6 +108,7 @@ public class TemplateIntrospect {
         root = buildNodeMap();
 
         this.language = language;
+
     }
 
     public static Map<Class, RmIntrospectConfig> buildConfigMap() {
