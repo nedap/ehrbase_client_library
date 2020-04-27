@@ -4,6 +4,7 @@ import com.google.common.collect.Lists;
 import com.nedap.archie.ArchieLanguageConfiguration;
 import com.nedap.archie.adlparser.modelconstraints.RMConstraintImposer;
 import com.nedap.archie.aom.Archetype;
+import com.nedap.archie.aom.ArchetypeSlot;
 import com.nedap.archie.aom.CArchetypeRoot;
 import com.nedap.archie.aom.CAttribute;
 import com.nedap.archie.aom.CComplexObject;
@@ -18,7 +19,6 @@ import com.nedap.archie.rminfo.ArchieRMInfoLookup;
 import com.nedap.archie.rminfo.ModelInfoLookup;
 import com.nedap.archie.rminfo.RMAttributeInfo;
 import com.nedap.archie.rminfo.RMTypeInfo;
-import org.ehrbase.client.building.rmobjektskeletonbuilder.*;
 
 import java.lang.reflect.InvocationTargetException;
 import java.util.ArrayList;
@@ -65,6 +65,8 @@ public class Opt2SkeletonBuilder {
             for (CObject childConstraint : attribute.getChildren()) {
                 if (childConstraint instanceof CComplexObject) {
                     createComplexObject(lookup, creator, children, childConstraint);
+                } else if (childConstraint instanceof ArchetypeSlot) {
+                    createArchetypeSlot(lookup, creator, children, (ArchetypeSlot) childConstraint);
                 } else {
                     createPrimitiveObject(lookup, creator, children, childConstraint);
                 }
@@ -77,6 +79,15 @@ public class Opt2SkeletonBuilder {
 
         return result;
 
+    }
+
+    private void createArchetypeSlot(ModelInfoLookup lookup, RMObjectCreator creator, List<Object> children, ArchetypeSlot slot) {
+        RMObject result = creator.create(slot);
+        if(result != null) {
+            RMTypeInfo typeInfo = lookup.getTypeInfo(slot.getRmTypeName());
+            addDefaultAttributes(lookup, creator, result, typeInfo);
+            children.add(result);
+        }
     }
 
     private void setAttributeValue(ModelInfoLookup lookup, RMObjectCreator creator, RMObject result, CAttribute attribute, List<Object> children) {

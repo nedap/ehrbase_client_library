@@ -36,6 +36,7 @@ import org.ehrbase.client.annotations.Entity;
 import org.ehrbase.client.annotations.OptionFor;
 import org.ehrbase.client.annotations.Path;
 import org.ehrbase.client.annotations.Template;
+import org.ehrbase.client.building.Opt2SkeletonBuilder;
 import org.ehrbase.client.building.OptSkeletonBuilder;
 import org.ehrbase.client.classgenerator.EnumValueSet;
 import org.ehrbase.client.exception.ClientException;
@@ -54,7 +55,7 @@ import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
 import java.util.*;
 
-public class Unflattener {
+public class RmObjectUnflattener {
 
     public static final ArchieRMInfoLookup ARCHIE_RM_INFO_LOOKUP = ArchieRMInfoLookup.getInstance();
     private static final RMObjectCreator RM_OBJECT_CREATOR = new RMObjectCreator(ARCHIE_RM_INFO_LOOKUP);
@@ -62,20 +63,22 @@ public class Unflattener {
 
     private Logger logger = LoggerFactory.getLogger(this.getClass());
     private TemplateProvider templateProvider;
-    public static final OptSkeletonBuilder OPT_SKELETON_BUILDER = new OptSkeletonBuilder();
+    public Opt2SkeletonBuilder optSkeletonBuilder;
 
-    private String language = "en";
+    private String language;
 
-    public Unflattener(TemplateProvider templateProvider) {
-
+    public RmObjectUnflattener(TemplateProvider templateProvider, String language) {
         this.templateProvider = templateProvider;
+        this.language = language;
+        optSkeletonBuilder = new Opt2SkeletonBuilder(language);
+
     }
 
     public RMObject unflatten(Object dto) {
         Template template = dto.getClass().getAnnotation(Template.class);
 
         OperationalTemplate operationalTemplate = templateProvider.find(template.value()).orElseThrow(() -> new ClientException(String.format("Unknown Template %s", template.value())));
-        Locatable generate = (Locatable) OPT_SKELETON_BUILDER.generate(operationalTemplate, operationalTemplate.getOriginalLanguage().getCodeString());
+        Locatable generate = optSkeletonBuilder.createEmptyRMObject(operationalTemplate);
 
         mapDtoToEntity(dto, generate);
         return NORMALIZER.normalize(generate);
